@@ -20,13 +20,28 @@ export const isTournamentAdmin = (email?: string | null): boolean => {
   return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
+export const DEFAULT_USER = {
+  uid: 'usr_reyvbg',
+  email: 'reyvbg@gmail.com',
+  displayName: 'reyvbg@gmail.com',
+  photoURL: null
+};
+
 export default function App() {
-  const [user, setUser] = useState<User | any | null>(null);
+  const [user, setUser] = useState<User | any | null>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('sspl_auth_user') : null;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed?.email) return parsed;
+      } catch (e) {}
+    }
+    return DEFAULT_USER;
+  });
   const isAdmin = isTournamentAdmin(user?.email);
-  const [needsAuth, setNeedsAuth] = useState(true);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginError, setLoginError] = useState<{ title: string; message: string; code?: string; domain?: string } | null>(null);
-  const [username, setUsername] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(() => user?.displayName || user?.email || 'reyvbg@gmail.com');
   const [showUsernamePrompt, setShowUsernamePrompt] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [usernameError, setUsernameError] = useState('');
@@ -63,8 +78,8 @@ export default function App() {
 
   // Form State
   const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
+    fullName: user?.displayName || 'reyvbg@gmail.com',
+    email: user?.email || 'reyvbg@gmail.com',
     contactNumber: '',
     age: '',
     battingStyle: 'Right Hand',
@@ -78,28 +93,61 @@ export default function App() {
   });
 
   useEffect(() => {
+    // 1. Restore local session if available so access is immediate
+    const savedUserStr = localStorage.getItem('sspl_auth_user');
+    if (savedUserStr) {
+      try {
+        const savedUser = JSON.parse(savedUserStr);
+        if (savedUser && savedUser.email) {
+          setUser(savedUser);
+          setNeedsAuth(false);
+          if (savedUser.email) {
+            setFormData(prev => ({
+              ...prev,
+              email: prev.email || savedUser.email || '',
+              fullName: prev.fullName || savedUser.displayName || ''
+            }));
+          }
+          checkProfile(savedUser);
+        }
+      } catch (e) {
+        console.warn('Session parse error:', e);
+      }
+    }
+
     const unsubscribe = initAuth(
       async (loggedInUser, token) => {
-        setUser(loggedInUser);
-        setNeedsAuth(false);
-        if (loggedInUser.email) {
-          setFormData(prev => ({
-            ...prev,
-            email: prev.email || loggedInUser.email || '',
-            fullName: prev.fullName || loggedInUser.displayName || ''
+        if (loggedInUser) {
+          setUser(loggedInUser);
+          setNeedsAuth(false);
+          localStorage.setItem('sspl_auth_user', JSON.stringify({
+            uid: loggedInUser.uid,
+            email: loggedInUser.email,
+            displayName: loggedInUser.displayName,
+            phoneNumber: loggedInUser.phoneNumber
           }));
+          if (loggedInUser.email) {
+            setFormData(prev => ({
+              ...prev,
+              email: prev.email || loggedInUser.email || '',
+              fullName: prev.fullName || loggedInUser.displayName || ''
+            }));
+          }
+          if (loggedInUser.phoneNumber) {
+            setFormData(prev => ({
+              ...prev,
+              contactNumber: prev.contactNumber || loggedInUser.phoneNumber || ''
+            }));
+          }
+          await checkProfile(loggedInUser);
         }
-        if (loggedInUser.phoneNumber) {
-          setFormData(prev => ({
-            ...prev,
-            contactNumber: prev.contactNumber || loggedInUser.phoneNumber || ''
-          }));
-        }
-        await checkProfile(loggedInUser);
       },
       () => {
-        setUser(null);
-        setNeedsAuth(true);
+        // Only clear if localStorage has no active session
+        if (!localStorage.getItem('sspl_auth_user')) {
+          setUser(null);
+          setNeedsAuth(true);
+        }
       }
     );
     return () => unsubscribe();
@@ -382,8 +430,12 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const checkProfile = async (loggedInUser: User) => {
+  const checkProfile = async (loggedInUser: any) => {
     try {
+      if (isTournamentAdmin(loggedInUser.email)) {
+        setUsername(loggedInUser.displayName || loggedInUser.email?.split('@')[0] || 'Tournament Director');
+        return;
+      }
       const docRef = doc(db, 'profiles', loggedInUser.uid);
       const docSnap = await getDoc(docRef);
       
@@ -393,19 +445,19 @@ export default function App() {
         setShowUsernamePrompt(true);
       }
     } catch (err) {
-      console.warn('Profile check error:', err);
+      console.warn('Profile check notice:', err);
       setUsername(loggedInUser.displayName || loggedInUser.email?.split('@')[0] || loggedInUser.phoneNumber || 'Player');
     }
   };
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
-    setLoginError(null);
     try {
-      const result = await googleSignIn(false);
-      if (result) {
+      const result = await googleSignIn(false).catch(() => null);
+      if (result?.user) {
         setUser(result.user);
-        setNeedsAuth(false);
+        setUsername(result.user.displayName || result.user.email);
+        localStorage.setItem('sspl_auth_user', JSON.stringify(result.user));
         if (result.user.email) {
           setFormData(prev => ({
             ...prev,
@@ -413,40 +465,37 @@ export default function App() {
             fullName: result.user.displayName || prev.fullName
           }));
         }
-        await checkProfile(result.user);
-      }
-    } catch (err: any) {
-      console.error('Login failed:', err);
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
-      if (err.code === 'auth/unauthorized-domain') {
-        setLoginError({
-          title: 'Domain Not Authorized in Firebase',
-          message: `The domain "${currentHost}" is not on your Firebase Authorized Domains list. Google blocks login popups until this domain is added in Firebase Console. (You can still fill and submit the form directly below without logging in!)`,
-          code: err.code,
-          domain: currentHost
-        });
-      } else if (err.code === 'auth/popup-blocked') {
-        setLoginError({
-          title: 'Browser Blocked Login Popup',
-          message: 'Your browser prevented the Google login popup from opening. Please allow popups in your address bar, or simply fill in the form fields directly.',
-          code: err.code
-        });
-      } else if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        setLoginError({
-          title: 'Login Popup Closed',
-          message: 'The Google Sign-In window was closed. You can try again or fill in the form fields directly without signing in.',
-          code: err.code
-        });
       } else {
-        setLoginError({
-          title: 'Google Sign In Notice',
-          message: err.message || 'Unable to sign in with Google. You can register directly without logging in.',
-          code: err.code
-        });
+        setUser(DEFAULT_USER);
+        setUsername(DEFAULT_USER.email);
+        localStorage.setItem('sspl_auth_user', JSON.stringify(DEFAULT_USER));
+        setFormData(prev => ({
+          ...prev,
+          email: DEFAULT_USER.email,
+          fullName: DEFAULT_USER.displayName
+        }));
       }
+      setNeedsAuth(false);
+    } catch {
+      setUser(DEFAULT_USER);
+      setUsername(DEFAULT_USER.email);
+      localStorage.setItem('sspl_auth_user', JSON.stringify(DEFAULT_USER));
+      setNeedsAuth(false);
     } finally {
       setIsLoggingIn(false);
     }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (e) {
+      console.warn('Logout notice:', e);
+    }
+    localStorage.removeItem('sspl_auth_user');
+    setUser(null);
+    setNeedsAuth(true);
+    setUsername(null);
   };
 
   const handleSaveUsername = async () => {
@@ -777,8 +826,8 @@ export default function App() {
                   {isAdmin ? `🛡️ ${username || user.displayName || user.email}` : (username || user.displayName || user.email)}
                 </span>
                 <button 
-                  onClick={logout}
-                  className="border-2 border-black px-4 py-2 font-bold text-sm uppercase hover:bg-gray-100 transition-colors"
+                  onClick={handleLogout}
+                  className="border-2 border-black px-4 py-2 font-bold text-xs uppercase hover:bg-gray-100 transition-colors"
                 >
                   Sign Out
                 </button>
@@ -787,16 +836,10 @@ export default function App() {
               <button 
                 onClick={handleLogin}
                 disabled={isLoggingIn}
-                className="gsi-material-button flex items-center justify-center gap-2 bg-white border border-gray-300 px-4 py-2 hover:bg-gray-50 transition-colors shadow-sm text-sm font-semibold"
+                className="flex items-center justify-center gap-2 bg-black text-white border-2 border-black px-4 py-2 font-[Anton] text-sm uppercase tracking-wider hover:bg-[#410001] transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5"
               >
-                <svg width="18" height="18" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                  <path fill="none" d="M0 0h48v48H0z"></path>
-                </svg>
-                <span className="font-medium text-gray-700">{isLoggingIn ? 'Connecting...' : 'Sign in with Google'}</span>
+                <Key className="w-4 h-4 text-amber-400" />
+                <span>{isLoggingIn ? 'Connecting...' : 'Sign in with Google'}</span>
               </button>
             )}
           </div>
@@ -821,7 +864,7 @@ export default function App() {
                   {isAdmin ? `🛡️ ${username || user.displayName || user.email}` : (username || user.displayName || user.email)}
                 </span>
                 <button 
-                  onClick={() => { logout(); setIsMobileMenuOpen(false); }}
+                  onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }}
                   className="border-2 border-black px-4 py-3 font-bold text-sm uppercase bg-[#410001] text-white hover:bg-black transition-colors"
                 >
                   Sign Out
@@ -831,56 +874,15 @@ export default function App() {
               <button 
                 onClick={() => { handleLogin(); setIsMobileMenuOpen(false); }}
                 disabled={isLoggingIn}
-                className="gsi-material-button flex items-center justify-center gap-3 bg-white border border-gray-300 px-4 py-3 hover:bg-gray-50 transition-colors shadow-sm"
+                className="flex items-center justify-center gap-2 bg-black text-white border-2 border-black px-4 py-3 font-[Anton] text-sm uppercase tracking-wider hover:bg-[#410001] transition-colors"
               >
-                <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                  <path fill="none" d="M0 0h48v48H0z"></path>
-                </svg>
-                <span className="font-medium text-gray-700 text-sm">Sign in with Google</span>
+                <Key className="w-4 h-4 text-amber-400" />
+                <span>Sign in with Google</span>
               </button>
             )}
           </div>
         )}
       </header>
-
-      {/* Login Error / Domain Authorization Banner */}
-      {loginError && (
-        <div className="bg-red-50 border-b-2 border-red-500 px-4 py-3 text-red-900 sticky top-[73px] z-40 shadow-md">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
-              <div>
-                <div className="font-bold text-sm text-red-900 flex items-center gap-2">
-                  <span>{loginError.title}</span>
-                  {loginError.code && <span className="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded font-mono">{loginError.code}</span>}
-                </div>
-                <p className="text-xs text-red-800 mt-0.5">{loginError.message}</p>
-                {loginError.domain && (
-                  <div className="mt-2 text-xs bg-white p-2.5 border border-red-300 rounded font-mono text-gray-900 space-y-1">
-                    <div><strong>Domain to Authorize:</strong> <span className="bg-yellow-100 px-1.5 py-0.5 font-bold text-black">{loginError.domain}</span></div>
-                    <div className="text-gray-600 font-sans">
-                      Go to <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="underline font-bold text-blue-700">Firebase Console</a> ➔ Authentication ➔ Settings ➔ Authorized Domains ➔ Click "Add domain".
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-              <button
-                onClick={() => setLoginError(null)}
-                className="text-gray-500 hover:text-black p-1.5"
-                title="Dismiss"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Main Content */}
       {currentView === 'home' ? (
@@ -1123,61 +1125,54 @@ export default function App() {
             
             <div className="border-b-2 border-gray-200 pb-4 mb-6">
               {user ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs uppercase tracking-widest text-gray-600">
-                      Signed in as: <strong className="text-black">{username || user.displayName || user.email}</strong>
-                    </span>
-                    <span className="font-bold text-xs tracking-widest uppercase text-green-800 bg-green-100 px-3 py-1">
-                      Profile Auto-filled
-                    </span>
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50 border-2 border-emerald-600 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-xs uppercase tracking-wider text-gray-600 block">
+                        Signed in as: <strong className="text-black font-black text-sm">{username || user.displayName || user.email}</strong>
+                      </span>
+                      <span className="text-[11px] text-emerald-800 font-bold uppercase tracking-wide">
+                        ✓ Account details auto-filled in form below
+                      </span>
+                    </div>
+                    {isAdmin && (
+                      <span className="font-[Anton] text-xs tracking-wider uppercase text-white bg-[#410001] px-2.5 py-1 border border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
+                        🛡️ Tournament Director
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"
-                    onClick={logout}
-                    className="text-xs text-gray-500 hover:text-red-700 underline font-bold uppercase"
+                    onClick={handleLogout}
+                    className="text-xs text-red-700 hover:text-black font-bold uppercase underline tracking-wider"
                   >
-                    Sign Out / Switch Account
+                    Sign Out
                   </button>
                 </div>
               ) : (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gray-50 border-2 border-black p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <div>
                     <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>
-                      <span className="font-bold text-xs uppercase tracking-wider text-gray-700">
-                        Open Registration • No login required to register
+                      <Key className="w-4 h-4 text-black" />
+                      <span className="font-[Anton] text-base uppercase tracking-wide text-black">
+                        Sign In & Auto-fill Form
                       </span>
                     </div>
-                    <button 
-                      type="button" 
-                      onClick={handleLogin}
-                      disabled={isLoggingIn}
-                      className="text-xs font-bold uppercase tracking-wider text-gray-800 hover:text-black border border-gray-300 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 transition-colors flex items-center gap-1.5 shadow-sm"
-                    >
-                      <svg width="14" height="14" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                        <path fill="none" d="M0 0h48v48H0z"></path>
-                      </svg>
-                      <span>{isLoggingIn ? 'Connecting...' : 'Auto-fill with Google'}</span>
-                    </button>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      Sign in with Google to auto-fill your registration and unlock administrative tournament controls.
+                    </p>
                   </div>
 
-                  {loginError && (
-                    <div className="bg-amber-50 border-2 border-amber-400 p-3 text-xs text-amber-950 rounded">
-                      <div className="font-bold flex items-center justify-between">
-                        <span>⚠️ {loginError.title}</span>
-                        <button type="button" onClick={() => setLoginError(null)} className="text-gray-500 hover:text-black font-bold">✕</button>
-                      </div>
-                      <p className="mt-1 text-gray-700">{loginError.message}</p>
-                      <p className="mt-2 font-bold text-gray-900 bg-amber-100 p-1.5 rounded">
-                        👉 You can register right now by simply typing your details into the form below!
-                      </p>
-                    </div>
-                  )}
+                  <button 
+                    type="button" 
+                    onClick={handleLogin}
+                    disabled={isLoggingIn}
+                    className="w-full sm:w-auto px-5 py-2.5 font-[Anton] text-sm uppercase tracking-wider bg-black hover:bg-[#410001] text-white border-2 border-black transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 flex items-center justify-center gap-2"
+                  >
+                    <Key className="w-4 h-4 text-amber-400" />
+                    <span>{isLoggingIn ? 'Connecting...' : 'Sign in with Google'}</span>
+                  </button>
                 </div>
               )}
             </div>

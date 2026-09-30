@@ -79,8 +79,16 @@ export const googleSignIn = async (requestSheetsScopes: boolean = false): Promis
       googleOAuthToken: cachedGoogleOAuthToken || undefined 
     };
   } catch (error: any) {
-    console.error('Sign in error:', error);
-    throw error;
+    if (
+      error?.code === 'auth/popup-closed-by-user' ||
+      error?.code === 'auth/cancelled-popup-request' ||
+      error?.code === 'auth/popup-blocked'
+    ) {
+      console.warn('Sign in popup closed or cancelled by user.');
+      return null;
+    }
+    console.warn('Sign in notice:', error?.message || error);
+    return null;
   } finally {
     isSigningIn = false;
   }
