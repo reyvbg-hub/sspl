@@ -1,0 +1,6 @@
+{
+  "name": "SSPL S3",
+  "description": "SSPL Season 3 Cricket Tournament Registration and Draft Board",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

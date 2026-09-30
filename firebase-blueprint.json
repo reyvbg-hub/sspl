@@ -1,0 +1,40 @@
+{
+  "collections": {
+    "profiles": {
+      "description": "User profiles.",
+      "fields": {
+        "userId": "string",
+        "username": "string",
+        "email": "string"
+      }
+    },
+    "registrations": {
+      "description": "Player registrations for the tournament.",
+      "fields": {
+        "createdAt": "timestamp",
+        "userEmail": "string",
+        "fullName": "string",
+        "contactNumber": "string",
+        "age": "string",
+        "battingStyle": "string",
+        "battingPosition": "string",
+        "bowlingStyle": "string",
+        "primaryFieldRole": "string",
+        "careerDetails": "string",
+        "jerseySize": "string",
+        "jerseyName": "string",
+        "jerseyNumber": "string"
+      }
+    },
+    "settings": {
+      "description": "App configuration and integrations such as Google Sheets metadata and registration status.",
+      "fields": {
+        "spreadsheetId": "string",
+        "spreadsheetUrl": "string",
+        "updatedAt": "timestamp",
+        "isRegistrationOpen": "boolean",
+        "closedNoticeMessage": "string"
+      }
+    }
+  }
+}
