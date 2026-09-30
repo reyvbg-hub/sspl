@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState, useRef, FormEvent, ChangeEvent } from 'react';
-import { Calendar, Shield, Activity, ChevronDown, Check, Download, Menu, X, ExternalLink, FileSpreadsheet, Radio, Zap, RefreshCw, CheckCircle2, Search, Lock, Unlock, Edit3, Save } from 'lucide-react';
+import { Calendar, Shield, Activity, ChevronDown, Check, Download, Menu, X, ExternalLink, FileSpreadsheet, Radio, Zap, RefreshCw, CheckCircle2, Search, Lock, Unlock, Edit3, Save, AlertTriangle, Key } from 'lucide-react';
 import { initAuth, googleSignIn, logout, db, getGoogleOAuthToken, setGoogleOAuthToken } from './lib/firebase';
 import { createTournamentSpreadsheet, appendPlayerToSpreadsheet, syncAllPlayersToSpreadsheet } from './lib/sheets';
 import { User } from 'firebase/auth';
@@ -21,10 +21,11 @@ export const isTournamentAdmin = (email?: string | null): boolean => {
 };
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | any | null>(null);
   const isAdmin = isTournamentAdmin(user?.email);
   const [needsAuth, setNeedsAuth] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<{ title: string; message: string; code?: string; domain?: string } | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [showUsernamePrompt, setShowUsernamePrompt] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -252,7 +253,7 @@ export default function App() {
     try {
       let token = getGoogleOAuthToken();
       if (!token) {
-        const res = await googleSignIn();
+        const res = await googleSignIn(true);
         if (res?.googleOAuthToken) {
           token = res.googleOAuthToken;
           setHasGoogleOAuthToken(true);
@@ -399,8 +400,9 @@ export default function App() {
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setLoginError(null);
     try {
-      const result = await googleSignIn();
+      const result = await googleSignIn(false);
       if (result) {
         setUser(result.user);
         setNeedsAuth(false);
@@ -409,6 +411,27 @@ export default function App() {
     } catch (err: any) {
       if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
         console.error('Login failed:', err);
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        if (err.code === 'auth/unauthorized-domain') {
+          setLoginError({
+            title: 'Domain Not Authorized in Firebase',
+            message: `Please add "${currentHost}" to Firebase Console ➔ Authentication ➔ Settings ➔ Authorized Domains so Google allows login popups from this domain.`,
+            code: err.code,
+            domain: currentHost
+          });
+        } else if (err.code === 'auth/popup-blocked') {
+          setLoginError({
+            title: 'Browser Blocked Login Popup',
+            message: 'Your browser prevented the Google login popup from opening. Please enable popups in your browser address bar and try again.',
+            code: err.code
+          });
+        } else {
+          setLoginError({
+            title: 'Sign In Failed',
+            message: err.message || 'Unable to sign in with Google.',
+            code: err.code
+          });
+        }
       }
     } finally {
       setIsLoggingIn(false);
@@ -739,7 +762,9 @@ export default function App() {
           <div className="hidden md:flex items-center gap-4">
             {user ? (
               <div className="flex items-center gap-4">
-                <span className="font-bold text-sm bg-gray-200 px-3 py-1 rounded-full">{username || user.displayName || user.email}</span>
+                <span className={`font-bold text-sm px-3 py-1 rounded-full ${isAdmin ? 'bg-[#410001] text-white shadow-sm' : 'bg-gray-200'}`}>
+                  {isAdmin ? `🛡️ ${username || user.displayName || user.email}` : (username || user.displayName || user.email)}
+                </span>
                 <button 
                   onClick={logout}
                   className="border-2 border-black px-4 py-2 font-bold text-sm uppercase hover:bg-gray-100 transition-colors"
@@ -760,7 +785,7 @@ export default function App() {
                   <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
                   <path fill="none" d="M0 0h48v48H0z"></path>
                 </svg>
-                <span className="font-medium text-gray-700">Sign in with Google</span>
+                <span className="font-medium text-gray-700">{isLoggingIn ? 'Connecting...' : 'Sign in with Google'}</span>
               </button>
             )}
           </div>
@@ -781,7 +806,9 @@ export default function App() {
             
             {user ? (
               <div className="flex flex-col gap-4">
-                <span className="font-bold text-sm bg-gray-200 px-3 py-2 rounded-full text-center">{username || user.displayName || user.email}</span>
+                <span className={`font-bold text-sm px-3 py-2 rounded-full text-center ${isAdmin ? 'bg-[#410001] text-white' : 'bg-gray-200'}`}>
+                  {isAdmin ? `🛡️ ${username || user.displayName || user.email}` : (username || user.displayName || user.email)}
+                </span>
                 <button 
                   onClick={() => { logout(); setIsMobileMenuOpen(false); }}
                   className="border-2 border-black px-4 py-3 font-bold text-sm uppercase bg-[#410001] text-white hover:bg-black transition-colors"
@@ -808,6 +835,41 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* Login Error / Domain Authorization Banner */}
+      {loginError && (
+        <div className="bg-red-50 border-b-2 border-red-500 px-4 py-3 text-red-900 sticky top-[73px] z-40 shadow-md">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+              <div>
+                <div className="font-bold text-sm text-red-900 flex items-center gap-2">
+                  <span>{loginError.title}</span>
+                  {loginError.code && <span className="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded font-mono">{loginError.code}</span>}
+                </div>
+                <p className="text-xs text-red-800 mt-0.5">{loginError.message}</p>
+                {loginError.domain && (
+                  <div className="mt-2 text-xs bg-white p-2.5 border border-red-300 rounded font-mono text-gray-900 space-y-1">
+                    <div><strong>Domain to Authorize:</strong> <span className="bg-yellow-100 px-1.5 py-0.5 font-bold text-black">{loginError.domain}</span></div>
+                    <div className="text-gray-600 font-sans">
+                      Go to <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="underline font-bold text-blue-700">Firebase Console</a> ➔ Authentication ➔ Settings ➔ Authorized Domains ➔ Click "Add domain".
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+              <button
+                onClick={() => setLoginError(null)}
+                className="text-gray-500 hover:text-black p-1.5"
+                title="Dismiss"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       {currentView === 'home' ? (

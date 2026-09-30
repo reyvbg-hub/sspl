@@ -23,14 +23,17 @@ export const db = getFirestore(
   (firebaseConfig as any).firestoreDatabaseId || 'ai-studio-f10e7f9b-44b1-4d9a-b58b-6f63b186fa9d'
 );
 
-const provider = new GoogleAuthProvider();
+const baseProvider = new GoogleAuthProvider();
+baseProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.file'
 ];
 
-SCOPES.forEach(scope => provider.addScope(scope));
+const sheetsProvider = new GoogleAuthProvider();
+SCOPES.forEach(scope => sheetsProvider.addScope(scope));
+sheetsProvider.setCustomParameters({ prompt: 'consent' });
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -57,10 +60,11 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string; googleOAuthToken?: string } | null> => {
+export const googleSignIn = async (requestSheetsScopes: boolean = false): Promise<{ user: User; accessToken: string; googleOAuthToken?: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const providerToUse = requestSheetsScopes ? sheetsProvider : baseProvider;
+    const result = await signInWithPopup(auth, providerToUse);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const token = credential?.accessToken || await result.user.getIdToken();
 
@@ -75,9 +79,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string;
       googleOAuthToken: cachedGoogleOAuthToken || undefined 
     };
   } catch (error: any) {
-    if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
-      console.error('Sign in error:', error);
-    }
+    console.error('Sign in error:', error);
     throw error;
   } finally {
     isSigningIn = false;
