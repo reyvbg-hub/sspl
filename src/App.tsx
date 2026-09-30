@@ -406,32 +406,43 @@ export default function App() {
       if (result) {
         setUser(result.user);
         setNeedsAuth(false);
+        if (result.user.email) {
+          setFormData(prev => ({
+            ...prev,
+            email: result.user.email || prev.email,
+            fullName: result.user.displayName || prev.fullName
+          }));
+        }
         await checkProfile(result.user);
       }
     } catch (err: any) {
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-        console.error('Login failed:', err);
-        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
-        if (err.code === 'auth/unauthorized-domain') {
-          setLoginError({
-            title: 'Domain Not Authorized in Firebase',
-            message: `Please add "${currentHost}" to Firebase Console ➔ Authentication ➔ Settings ➔ Authorized Domains so Google allows login popups from this domain.`,
-            code: err.code,
-            domain: currentHost
-          });
-        } else if (err.code === 'auth/popup-blocked') {
-          setLoginError({
-            title: 'Browser Blocked Login Popup',
-            message: 'Your browser prevented the Google login popup from opening. Please enable popups in your browser address bar and try again.',
-            code: err.code
-          });
-        } else {
-          setLoginError({
-            title: 'Sign In Failed',
-            message: err.message || 'Unable to sign in with Google.',
-            code: err.code
-          });
-        }
+      console.error('Login failed:', err);
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+      if (err.code === 'auth/unauthorized-domain') {
+        setLoginError({
+          title: 'Domain Not Authorized in Firebase',
+          message: `The domain "${currentHost}" is not on your Firebase Authorized Domains list. Google blocks login popups until this domain is added in Firebase Console. (You can still fill and submit the form directly below without logging in!)`,
+          code: err.code,
+          domain: currentHost
+        });
+      } else if (err.code === 'auth/popup-blocked') {
+        setLoginError({
+          title: 'Browser Blocked Login Popup',
+          message: 'Your browser prevented the Google login popup from opening. Please allow popups in your address bar, or simply fill in the form fields directly.',
+          code: err.code
+        });
+      } else if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        setLoginError({
+          title: 'Login Popup Closed',
+          message: 'The Google Sign-In window was closed. You can try again or fill in the form fields directly without signing in.',
+          code: err.code
+        });
+      } else {
+        setLoginError({
+          title: 'Google Sign In Notice',
+          message: err.message || 'Unable to sign in with Google. You can register directly without logging in.',
+          code: err.code
+        });
       }
     } finally {
       setIsLoggingIn(false);
@@ -1110,39 +1121,63 @@ export default function App() {
               </div>
             )}
             
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-gray-200 pb-4 mb-4">
+            <div className="border-b-2 border-gray-200 pb-4 mb-6">
               {user ? (
-                <>
-                  <span className="font-bold text-xs uppercase tracking-widest text-gray-600">
-                    Signed in as: <strong className="text-black">{username || user.displayName || user.email}</strong>
-                  </span>
-                  <span className="font-bold text-xs tracking-widest uppercase text-green-800 bg-green-100 px-3 py-1">
-                    Account Verified
-                  </span>
-                </>
-              ) : (
-                <div className="flex flex-wrap items-center justify-between w-full gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
-                    <span className="font-bold text-xs uppercase tracking-wider text-gray-600">
-                      Open Registration • Quick Auto-fill
+                    <span className="font-bold text-xs uppercase tracking-widest text-gray-600">
+                      Signed in as: <strong className="text-black">{username || user.displayName || user.email}</strong>
+                    </span>
+                    <span className="font-bold text-xs tracking-widest uppercase text-green-800 bg-green-100 px-3 py-1">
+                      Profile Auto-filled
                     </span>
                   </div>
-                  <button 
-                    type="button" 
-                    onClick={handleLogin}
-                    disabled={isLoggingIn}
-                    className="text-xs font-bold uppercase tracking-wider text-gray-700 hover:text-black hover:underline flex items-center gap-1.5"
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="text-xs text-gray-500 hover:text-red-700 underline font-bold uppercase"
                   >
-                    <svg width="14" height="14" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                      <path fill="none" d="M0 0h48v48H0z"></path>
-                    </svg>
-                    <span>Sign in with Google</span>
+                    Sign Out / Switch Account
                   </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+                      <span className="font-bold text-xs uppercase tracking-wider text-gray-700">
+                        Open Registration • No login required to register
+                      </span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={handleLogin}
+                      disabled={isLoggingIn}
+                      className="text-xs font-bold uppercase tracking-wider text-gray-800 hover:text-black border border-gray-300 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 transition-colors flex items-center gap-1.5 shadow-sm"
+                    >
+                      <svg width="14" height="14" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        <path fill="none" d="M0 0h48v48H0z"></path>
+                      </svg>
+                      <span>{isLoggingIn ? 'Connecting...' : 'Auto-fill with Google'}</span>
+                    </button>
+                  </div>
+
+                  {loginError && (
+                    <div className="bg-amber-50 border-2 border-amber-400 p-3 text-xs text-amber-950 rounded">
+                      <div className="font-bold flex items-center justify-between">
+                        <span>⚠️ {loginError.title}</span>
+                        <button type="button" onClick={() => setLoginError(null)} className="text-gray-500 hover:text-black font-bold">✕</button>
+                      </div>
+                      <p className="mt-1 text-gray-700">{loginError.message}</p>
+                      <p className="mt-2 font-bold text-gray-900 bg-amber-100 p-1.5 rounded">
+                        👉 You can register right now by simply typing your details into the form below!
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
