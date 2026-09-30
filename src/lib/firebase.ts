@@ -2,6 +2,8 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   onAuthStateChanged, 
   User, 
@@ -43,6 +45,23 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Capture redirect result if user came back from Google redirect
+  getRedirectResult(auth)
+    .then(async (result) => {
+      if (result?.user) {
+        const token = await result.user.getIdToken();
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          cachedGoogleOAuthToken = credential.accessToken;
+        }
+        cachedAccessToken = token;
+        if (onAuthSuccess) onAuthSuccess(result.user, token);
+      }
+    })
+    .catch((err) => {
+      console.warn('Redirect sign in error:', err);
+    });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       try {
@@ -64,7 +83,18 @@ export const googleSignIn = async (requestSheetsScopes: boolean = false): Promis
   try {
     isSigningIn = true;
     const providerToUse = requestSheetsScopes ? sheetsProvider : baseProvider;
-    const result = await signInWithPopup(auth, providerToUse);
+    let result;
+    try {
+      result = await signInWithPopup(auth, providerToUse);
+    } catch (popupErr: any) {
+      if (popupErr?.code === 'auth/popup-blocked') {
+        console.info('Popup blocked, attempting redirect sign-in...');
+        await signInWithRedirect(auth, providerToUse);
+        return null;
+      }
+      throw popupErr;
+    }
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const token = credential?.accessToken || await result.user.getIdToken();
 
@@ -79,16 +109,8 @@ export const googleSignIn = async (requestSheetsScopes: boolean = false): Promis
       googleOAuthToken: cachedGoogleOAuthToken || undefined 
     };
   } catch (error: any) {
-    if (
-      error?.code === 'auth/popup-closed-by-user' ||
-      error?.code === 'auth/cancelled-popup-request' ||
-      error?.code === 'auth/popup-blocked'
-    ) {
-      console.warn('Sign in popup closed or cancelled by user.');
-      return null;
-    }
-    console.warn('Sign in notice:', error?.message || error);
-    return null;
+    console.error('Google Sign In error:', error);
+    throw error;
   } finally {
     isSigningIn = false;
   }

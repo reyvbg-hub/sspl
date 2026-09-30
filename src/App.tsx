@@ -20,28 +20,13 @@ export const isTournamentAdmin = (email?: string | null): boolean => {
   return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
-export const DEFAULT_USER = {
-  uid: 'usr_reyvbg',
-  email: 'reyvbg@gmail.com',
-  displayName: 'reyvbg@gmail.com',
-  photoURL: null
-};
-
 export default function App() {
-  const [user, setUser] = useState<User | any | null>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('sspl_auth_user') : null;
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed?.email) return parsed;
-      } catch (e) {}
-    }
-    return DEFAULT_USER;
-  });
+  const [user, setUser] = useState<User | null>(null);
   const isAdmin = isTournamentAdmin(user?.email);
-  const [needsAuth, setNeedsAuth] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [username, setUsername] = useState<string | null>(() => user?.displayName || user?.email || 'reyvbg@gmail.com');
+  const [authNotice, setAuthNotice] = useState<{ title: string; message: string; code?: string; action?: string } | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
   const [showUsernamePrompt, setShowUsernamePrompt] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [usernameError, setUsernameError] = useState('');
@@ -78,8 +63,8 @@ export default function App() {
 
   // Form State
   const [formData, setFormData] = useState({
-    fullName: user?.displayName || 'reyvbg@gmail.com',
-    email: user?.email || 'reyvbg@gmail.com',
+    fullName: '',
+    email: '',
     contactNumber: '',
     age: '',
     battingStyle: 'Right Hand',
@@ -93,39 +78,12 @@ export default function App() {
   });
 
   useEffect(() => {
-    // 1. Restore local session if available so access is immediate
-    const savedUserStr = localStorage.getItem('sspl_auth_user');
-    if (savedUserStr) {
-      try {
-        const savedUser = JSON.parse(savedUserStr);
-        if (savedUser && savedUser.email) {
-          setUser(savedUser);
-          setNeedsAuth(false);
-          if (savedUser.email) {
-            setFormData(prev => ({
-              ...prev,
-              email: prev.email || savedUser.email || '',
-              fullName: prev.fullName || savedUser.displayName || ''
-            }));
-          }
-          checkProfile(savedUser);
-        }
-      } catch (e) {
-        console.warn('Session parse error:', e);
-      }
-    }
-
     const unsubscribe = initAuth(
-      async (loggedInUser, token) => {
+      async (loggedInUser) => {
         if (loggedInUser) {
           setUser(loggedInUser);
           setNeedsAuth(false);
-          localStorage.setItem('sspl_auth_user', JSON.stringify({
-            uid: loggedInUser.uid,
-            email: loggedInUser.email,
-            displayName: loggedInUser.displayName,
-            phoneNumber: loggedInUser.phoneNumber
-          }));
+          setAuthNotice(null);
           if (loggedInUser.email) {
             setFormData(prev => ({
               ...prev,
@@ -143,11 +101,8 @@ export default function App() {
         }
       },
       () => {
-        // Only clear if localStorage has no active session
-        if (!localStorage.getItem('sspl_auth_user')) {
-          setUser(null);
-          setNeedsAuth(true);
-        }
+        setUser(null);
+        setNeedsAuth(true);
       }
     );
     return () => unsubscribe();
@@ -452,12 +407,12 @@ export default function App() {
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setAuthNotice(null);
     try {
-      const result = await googleSignIn(false).catch(() => null);
+      const result = await googleSignIn(false);
       if (result?.user) {
         setUser(result.user);
-        setUsername(result.user.displayName || result.user.email);
-        localStorage.setItem('sspl_auth_user', JSON.stringify(result.user));
+        setNeedsAuth(false);
         if (result.user.email) {
           setFormData(prev => ({
             ...prev,
@@ -465,22 +420,38 @@ export default function App() {
             fullName: result.user.displayName || prev.fullName
           }));
         }
-      } else {
-        setUser(DEFAULT_USER);
-        setUsername(DEFAULT_USER.email);
-        localStorage.setItem('sspl_auth_user', JSON.stringify(DEFAULT_USER));
-        setFormData(prev => ({
-          ...prev,
-          email: DEFAULT_USER.email,
-          fullName: DEFAULT_USER.displayName
-        }));
+        await checkProfile(result.user);
       }
-      setNeedsAuth(false);
-    } catch {
-      setUser(DEFAULT_USER);
-      setUsername(DEFAULT_USER.email);
-      localStorage.setItem('sspl_auth_user', JSON.stringify(DEFAULT_USER));
-      setNeedsAuth(false);
+    } catch (err: any) {
+      console.error('Google Sign In error:', err);
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      if (err?.code === 'auth/operation-not-allowed') {
+        setAuthNotice({
+          title: 'Google Sign-In is Disabled in Firebase Console',
+          code: 'auth/operation-not-allowed',
+          message: 'The Google Sign-In provider has not been enabled yet in your Firebase project.',
+          action: '1. Open Firebase Console (console.firebase.google.com) ➔ Select your project\n2. Click "Authentication" in left navigation ➔ Go to "Sign-in method" tab\n3. Click "Google" under Sign-in providers ➔ Switch the toggle to "Enable"\n4. Select your Project support email from the dropdown and click "Save".'
+        });
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        setAuthNotice({
+          title: 'Domain Not Authorized in Firebase',
+          code: 'auth/unauthorized-domain',
+          message: `The domain "${host}" is not recognized on your Firebase Authorized Domains list.`,
+          action: `1. Open Firebase Console ➔ "Authentication" ➔ "Settings" tab ➔ "Authorized domains"\n2. Click "Add domain" and enter exactly: ${host}\n(⚠️ Do NOT include "https://" or any slashes - enter just "${host}")\n3. Click "Add" and retry sign-in.`
+        });
+      } else if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        setAuthNotice({
+          title: 'Sign-in Window Closed',
+          code: err.code,
+          message: 'The Google popup was closed before completing sign-in. Click "Sign in with Google" to try again.'
+        });
+      } else {
+        setAuthNotice({
+          title: 'Google Sign-In Notice',
+          code: err?.code || 'auth/error',
+          message: err?.message || 'Unable to complete Google sign-in. Check your browser popup settings.'
+        });
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -492,10 +463,10 @@ export default function App() {
     } catch (e) {
       console.warn('Logout notice:', e);
     }
-    localStorage.removeItem('sspl_auth_user');
     setUser(null);
     setNeedsAuth(true);
     setUsername(null);
+    setAuthNotice(null);
   };
 
   const handleSaveUsername = async () => {
@@ -883,6 +854,39 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* Auth Notice / Firebase Setup Diagnostics Banner */}
+      {authNotice && (
+        <div className="bg-amber-50 border-b-2 border-amber-600 px-4 py-4 text-amber-950 sticky top-[73px] z-40 shadow-lg">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-1 shrink-0" />
+              <div>
+                <div className="font-bold text-sm text-black flex items-center gap-2">
+                  <span>{authNotice.title}</span>
+                  {authNotice.code && (
+                    <span className="text-xs font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-bold">
+                      {authNotice.code}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-800 mt-1 font-medium">{authNotice.message}</p>
+                {authNotice.action && (
+                  <pre className="mt-2 text-xs bg-white p-3 border-2 border-amber-400 font-mono text-black whitespace-pre-wrap leading-relaxed shadow-sm">
+                    {authNotice.action}
+                  </pre>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setAuthNotice(null)}
+              className="px-3 py-1.5 bg-black text-white text-xs font-bold uppercase hover:bg-gray-800 shrink-0 self-end md:self-center"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       {currentView === 'home' ? (
